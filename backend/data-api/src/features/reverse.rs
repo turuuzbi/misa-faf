@@ -18,6 +18,10 @@ pub async fn get(
     State(pool): State<sqlx::PgPool>,
     Path(user_id): Path<Uuid>,
 ) -> super::helpers::ApiResult {
+    // Off or plan-locked: serve the front only; saved placements are kept.
+    if !feature_on(&pool, &user_id, "reverse").await.0 {
+        return Err(err(StatusCode::NOT_FOUND, "feature_off"));
+    }
     let placements = load(&pool, &user_id).await;
     ok(json!({ "placements": placements }))
 }
@@ -45,7 +49,6 @@ pub async fn set(
         ));
     }
     let mut seen = std::collections::HashSet::new();
-    let mut sides = std::collections::HashSet::new();
     for p in placements {
         let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let side = p.get("side").and_then(|v| v.as_str()).unwrap_or("");
@@ -66,7 +69,6 @@ pub async fn set(
                 "Duplicate placement id.",
             ));
         }
-        sides.insert(side.to_string());
     }
     set_aux(&pool, &user_id, "reverse", &json!({ "placements": placements })).await;
     ok(json!({ "ok": true, "placements": placements }))

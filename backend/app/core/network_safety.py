@@ -94,8 +94,8 @@ def safe_media_url(value: object) -> str | None:
     return safe_public_url(value, allowed_hosts=configured_media_hosts(), https_only=True)
 
 
-async def _resolved_url(value: str, allowed_hosts: Iterable[str]) -> str | None:
-    safe = safe_public_url(value, allowed_hosts=allowed_hosts, https_only=True)
+async def _resolved_url(value: str, allowed_hosts: Iterable[str] | None, *, https_only: bool = True) -> str | None:
+    safe = safe_public_url(value, allowed_hosts=allowed_hosts, https_only=https_only)
     if not safe:
         return None
     parsed = urlparse(safe)
@@ -103,7 +103,7 @@ async def _resolved_url(value: str, allowed_hosts: Iterable[str]) -> str | None:
         records = await asyncio.to_thread(
             socket.getaddrinfo,
             parsed.hostname,
-            parsed.port or 443,
+            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
             type=socket.SOCK_STREAM,
         )
     except (OSError, UnicodeError):
@@ -157,3 +157,34 @@ async def fetch_public_image_bytes(url: object, *, max_bytes: int, max_redirects
     except (httpx.HTTPError, OSError, ValueError):
         return None
     return None
+
+
+async def probe_public_url(url: object, *, max_redirects: int = 3, timeout: float = 8.0) -> tuple[bool, str]:
+    """Check whether a user-supplied web link answers, without reaching private networks.
+
+    Every hop (including redirects) must be http(s) on a standard port and resolve
+    only to public addresses, so a profile link cannot be used to probe the
+    data-api, Dragonfly, cloud metadata or anything else on the internal network.
+    Returns (ok, note) for display in the dashboard.
+    """
+    current = str(url or "").strip()
+    headers = {"User-Agent": "Mozilla/5.0 (misa.lol link check)"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+            for redirect_count in range(max_redirects + 1):
+                safe = await _resolved_url(current, None, https_only=False)
+                if not safe:
+                    return False, "not a public web address"
+                async with client.stream("GET", safe, headers=headers) as response:
+                    if response.status_code in _REDIRECT_CODES:
+                        location = response.headers.get("location")
+                        if not location or redirect_count >= max_redirects:
+                            return False, "too many redirects"
+                        current = urljoin(safe, location)
+                        continue
+                    if response.status_code < 400:
+                        return True, "ok"
+                    return False, f"returns {response.status_code}"
+    except (httpx.HTTPError, OSError, ValueError):
+        return False, "could not reach it"
+    return False, "could not reach it"

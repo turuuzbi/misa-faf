@@ -25,8 +25,7 @@ pub struct SubmitBody {
 }
 
 async fn config_values(pool: &PgPool, user_id: &Uuid) -> (bool, bool) {
-    let settings = settings_of(read_config(pool, user_id).await.as_ref());
-    let enabled = feature_enabled(&settings, "doodles");
+    let (enabled, settings) = feature_on(pool, user_id, "doodles").await;
     let paused = settings
         .get("doodlesPaused")
         .and_then(|v| v.as_bool())

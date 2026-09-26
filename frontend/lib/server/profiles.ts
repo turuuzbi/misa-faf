@@ -28,6 +28,32 @@ export async function listUserBadgeGrants(userId: string) {
   }
 }
 
+/**
+ * Public serializer for editor-owned feature settings. Mirrors
+ * `public_feature_projection` in backend/app/core/feature_privacy.py: the sealed
+ * capsule text, the secret word/link and one-way neighbour nominations must never
+ * reach a visitor (they are served, when allowed, by /api/v1/features/*).
+ */
+export function publicFeatureProjection(config: Record<string, unknown>) {
+  const settings = object(config.settings);
+  if (!Object.keys(settings).length) return config;
+  const capsule = settings.capsule;
+  if (capsule && typeof capsule === "object" && !Array.isArray(capsule)) {
+    const c = capsule as Record<string, unknown>;
+    const safe: Record<string, unknown> = { sealed: Boolean(String(c.text ?? "").trim()) };
+    for (const key of ["label", "at", "tz"]) if (key in c) safe[key] = c[key];
+    settings.capsule = safe;
+  }
+  if ("secret" in settings) {
+    const s = object(settings.secret);
+    settings.secret = { configured: Boolean(s.configured || (s.word && s.url)) };
+  }
+  if (Array.isArray(settings.neighbours)) {
+    settings.neighbours = settings.neighbours.some((name) => String(name ?? "").trim());
+  }
+  return { ...config, settings };
+}
+
 export async function publicProfile(username: string) {
   const user = await userByUsername(username.trim().toLowerCase());
   if (!user?.username) return null;
@@ -59,6 +85,7 @@ export async function publicProfile(username: string) {
   // Apply premium projection
   const entitled = await hasActivePremium(user.id);
   config = publicProjection(config, entitled);
+  config = publicFeatureProjection(config);
 
   // Authoritative active badges
   const grants = await listUserBadgeGrants(user.id);

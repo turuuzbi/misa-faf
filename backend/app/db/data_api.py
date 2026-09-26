@@ -37,9 +37,14 @@ def _client_or_raise() -> httpx.AsyncClient:
     return _client
 
 
+_RETRY_SAFE_METHODS = {"GET", "HEAD", "PUT", "DELETE"}
+
+
 async def _request(method: str, path: str, **kwargs: Any) -> dict | None:
     response = await _client_or_raise().request(method, path, **kwargs)
-    if response.status_code >= 500:
+    # Retry once on a server error, but only for idempotent methods: replaying a
+    # POST (a guestbook entry, a vote, an AMA question) could store it twice.
+    if response.status_code >= 500 and method.upper() in _RETRY_SAFE_METHODS:
         response = await _client_or_raise().request(method, path, **kwargs)
     if response.status_code == 404:
         return None

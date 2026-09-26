@@ -15,6 +15,11 @@ export const DEFAULT_FEATURE_FLAGS: Record<string, boolean> = {
   "profile.views": true, "profile.joinDate": true, "integrations.discord": true,
   "feature.usernameEffects.glitch": true, "feature.usernameEffects.pulse": true,
   "feature.usernameEffects.wave": true, "feature.usernameEffects.shadow": true,
+  // Living-profile features: the data-api enforces these; the UI only skips dead widgets.
+  "feature.ask_anything": true, "feature.other_side": true, "feature.night_shift": true, "feature.daily_draw": true,
+  "feature.time_capsule": true, "feature.archive": true, "feature.moon": true, "feature.guestbook": true,
+  "feature.neighbours": true, "feature.alive": true, "feature.alive.presence": true, "feature.alive.clock": true,
+  "feature.alive.hits": true, "feature.secret_word": true, "feature.chalkboard": true, "feature.tally": true,
 };
 
 const FEATURE_FLAGS_KEY = "feature-flags";

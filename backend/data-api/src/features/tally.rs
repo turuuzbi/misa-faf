@@ -1,16 +1,32 @@
 use super::helpers::*;
-use axum::extract::{Json, Path, State};
+use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+// Spec (feature 13): one question up to 200 chars, two to four answers up to 80 chars.
 pub const Q_MIN: usize = 1;
-pub const Q_MAX: usize = 140;
+pub const Q_MAX: usize = 200;
 pub const OPTIONS_MIN: usize = 2;
-pub const OPTIONS_MAX: usize = 12;
-pub const OPTION_MAX: usize = 64;
+pub const OPTIONS_MAX: usize = 4;
+pub const OPTION_MAX: usize = 80;
+
+/// Owner switch: the editor stores the poll itself in `settings.tally = {q, options}`;
+/// the poll is on only when it has a question (or an explicit `enabled: true`).
+async fn tally_on(pool: &PgPool, user_id: &Uuid) -> bool {
+    let settings = settings_of(read_config(pool, user_id).await.as_ref());
+    let owner_on = match settings.get("tally") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Object(map)) => match map.get("enabled") {
+            Some(Value::Bool(b)) => *b,
+            _ => map.get("q").and_then(|v| v.as_str()).map(|q| !q.trim().is_empty()).unwrap_or(false),
+        },
+        _ => false,
+    };
+    owner_on && global_enabled(pool, "tally").await
+}
 
 #[derive(Deserialize)]
 pub struct PublishBody {
@@ -18,10 +34,21 @@ pub struct PublishBody {
 }
 
 #[derive(Deserialize)]
+pub struct CurrentQuery {
+    /// The visitor's page-scoped browser token. When it has voted, totals are
+    /// returned under the default "afterVote" visibility (previously the server
+    /// never knew who had voted, so afterVote results were never shown).
+    voter: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct VoteBody {
     token: Option<String>,
     option: Option<String>,
     idem: Option<String>,
+    /// Poll the visitor's form was rendered for. When present it must match the
+    /// current poll, so a stale form cannot vote into a reset/new poll.
+    poll_id: Option<Uuid>,
 }
 
 fn fingerprint(poll: &Value) -> String {
@@ -82,7 +109,11 @@ fn validate_poll(poll: &Value) -> Result<(), (StatusCode, Json<Value>)> {
 pub async fn current(
     State(pool): State<PgPool>,
     Path(user_id): Path<Uuid>,
+    Query(q): Query<CurrentQuery>,
 ) -> ApiResult {
+    if !tally_on(&pool, &user_id).await {
+        return Err(err(StatusCode::NOT_FOUND, "feature_off"));
+    }
     match latest(&pool, &user_id).await {
         Some((id, revision, poll, status)) => {
             let closed = status == "closed";
@@ -90,7 +121,19 @@ pub async fn current(
                 .get("visibility")
                 .and_then(|v| v.as_str())
                 .unwrap_or("afterVote");
-            let show_totals = closed || visibility == "always";
+            let voted: Option<String> = match q.voter.as_deref().map(str::trim) {
+                Some(token) if !token.is_empty() && token.len() <= 128 => sqlx::query_scalar(
+                    "SELECT option_id FROM feature_tally_votes WHERE poll_id=$1 AND key=$2",
+                )
+                .bind(id)
+                .bind(hmac_key(&id, token))
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten(),
+                _ => None,
+            };
+            let show_totals = closed || visibility == "always" || (visibility == "afterVote" && voted.is_some());
             let counts: Vec<(String, i64)> = sqlx::query_as(
                 "SELECT option_id, COUNT(*) FROM feature_tally_votes WHERE poll_id=$1 GROUP BY option_id",
             )
@@ -118,6 +161,7 @@ pub async fn current(
                 },
                 "counts": totals,
                 "closed": closed,
+                "voted": voted,
             }))
         }
         None => ok(json!({ "poll": null })),
@@ -167,10 +211,18 @@ pub async fn vote(
     Path(user_id): Path<Uuid>,
     Json(body): Json<VoteBody>,
 ) -> ApiResult {
+    if !tally_on(&pool, &user_id).await {
+        return Err(err(StatusCode::FORBIDDEN, "feature_off"));
+    }
     let (poll_id, _rev, poll, status) = match latest(&pool, &user_id).await {
         Some(x) => x,
         None => return Err(err_reason(StatusCode::NOT_FOUND, "no_poll", "There is no poll.")),
     };
+    if let Some(seen) = body.poll_id {
+        if seen != poll_id {
+            return Err(err_reason(StatusCode::CONFLICT, "stale_poll", "This poll has changed. Reload to vote."));
+        }
+    }
     if status != "open" {
         return Err(err_reason(StatusCode::FORBIDDEN, "poll_closed", "This poll is closed."));
     }
@@ -247,7 +299,13 @@ pub async fn reopen(
     State(pool): State<PgPool>,
     Path(user_id): Path<Uuid>,
 ) -> ApiResult {
-    let affected = sqlx::query("UPDATE feature_tally_polls SET status='open', closed_at=NULL WHERE user_id=$1 AND status='closed'")
+    // Only the current (latest) poll can be reopened; older revisions stay closed.
+    let affected = sqlx::query(
+        "UPDATE feature_tally_polls SET status='open', closed_at=NULL
+         WHERE status='closed' AND id = (
+            SELECT id FROM feature_tally_polls WHERE user_id=$1 ORDER BY published_at DESC LIMIT 1
+         )",
+    )
         .bind(user_id)
         .execute(&pool)
         .await

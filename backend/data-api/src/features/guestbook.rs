@@ -15,6 +15,8 @@ pub const RATE_WINDOW_MS: i64 = 600_000;
 
 #[derive(Deserialize)]
 pub struct Submit {
+    // The FastAPI proxy historically sent `name`; accept both spellings.
+    #[serde(alias = "name")]
     display_name: Option<String>,
     message: Option<String>,
     ip: Option<String>,
@@ -28,8 +30,7 @@ pub struct ListQuery {
 }
 
 async fn config_values(pool: &PgPool, user_id: &Uuid) -> (bool, bool, bool) {
-    let settings = settings_of(read_config(pool, user_id).await.as_ref());
-    let enabled = feature_enabled(&settings, "guestbook");
+    let (enabled, settings) = feature_on(pool, user_id, "guestbook").await;
     let paused = settings
         .get("guestbookPaused")
         .and_then(|v| v.as_bool())
@@ -57,8 +58,8 @@ pub async fn submit(
     let key = scope_key(&ip);
     rate_limit(&pool, &user_id, "guestbook_submit", &key, RATE_WINDOW_MS, RATE_MAX).await?;
 
-    let name = body.display_name.unwrap_or_default();
-    let message = body.message.unwrap_or_default();
+    let name = body.display_name.unwrap_or_default().trim().to_string();
+    let message = body.message.unwrap_or_default().trim().to_string();
     if name.is_empty() || name.chars().count() > NAME_MAX {
         return Err(err_reason(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -111,7 +112,7 @@ pub async fn list(
     if !enabled {
         return Err(err(StatusCode::NOT_FOUND, "feature_off"));
     }
-    let page_size = q.page_size.map(|v| v.min(VISIBLE_MAX as u32) as usize).unwrap_or(VISIBLE_MAX);
+    let page_size = q.page_size.map(|v| v.clamp(1, VISIBLE_MAX as u32) as usize).unwrap_or(VISIBLE_MAX);
     let page = q.page.unwrap_or(1).max(1);
     let offset = ((page - 1) as i64) * (page_size as i64);
     let total: i64 =

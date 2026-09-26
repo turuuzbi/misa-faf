@@ -18,7 +18,9 @@ async def _features(method: str, user_id: str, path: str = "", **kwargs: Any) ->
 # ----- guestbook -------------------------------------------------------------
 
 async def guestbook_submit(user_id: str, *, name: str, message: str, ip: str) -> dict | None:
-    return await _features("POST", user_id, "guestbook", json={"name": name, "message": message, "ip": ip})
+    # The data-api field is `display_name` (it now also accepts `name`); sending
+    # `name` alone made every guestbook submission fail validation.
+    return await _features("POST", user_id, "guestbook", json={"display_name": name, "message": message, "ip": ip})
 
 
 async def guestbook_list(user_id: str) -> dict | None:
@@ -123,16 +125,20 @@ async def capsule_unpublish(user_id: str) -> dict | None:
 
 # ----- tally -----------------------------------------------------------------
 
-async def tally_current(user_id: str) -> dict | None:
-    return await _features("GET", user_id, "tally")
+async def tally_current(user_id: str, *, voter: str | None = None) -> dict | None:
+    params = {"voter": voter} if voter else None
+    return await _features("GET", user_id, "tally", params=params)
 
 
 async def tally_publish(user_id: str, poll: dict) -> dict | None:
     return await _features("POST", user_id, "tally", json={"poll": poll})
 
 
-async def tally_vote(user_id: str, *, token: str, option: str, idem: str) -> dict | None:
-    return await _features("POST", user_id, "tally/vote", json={"token": token, "option": option, "idem": idem})
+async def tally_vote(user_id: str, *, token: str, option: str, idem: str, poll_id: str | None = None) -> dict | None:
+    payload: dict[str, Any] = {"token": token, "option": option, "idem": idem}
+    if poll_id:
+        payload["poll_id"] = poll_id
+    return await _features("POST", user_id, "tally/vote", json=payload)
 
 
 async def tally_action(user_id: str, action: str) -> dict | None:

@@ -10,11 +10,13 @@ from app.core.discord_live import safe_discord_img
 from app.core.og_card import share_copy
 from app.core.public_origin import public_origin_for
 from app.core.markdown import render_safe_markdown
+from app.core.profile_features import features_markup, public_features_payload
 from app.core.profile_sanitize import PAGE_ENTERS, PROFILE_FONTS, USERNAME_EFFECTS, css_hex_color, has_public_asset, is_safe_social_icon, public_playlist, public_social_href, sanitize_profile_config
 from app.core.sections import visible_sections, project_configured
 from app.core.widgets import safe_widget_url
 from app.core.social_icons import social_icon_markup
 from app.core.social_prefixes import DEFAULT_ICON_COLOR, resolve_icon_color
+
 
 def _color_with_alpha(value: str, alpha: float) -> str:
     raw = (value or "#ffffff").lstrip("#")
@@ -575,7 +577,7 @@ p.className="misa-sakura-petal";p.style.animation="misa-sakura-fall "+ft+"s line
 p.style.background=l.dataset.color?"linear-gradient(120deg,rgba("+l.dataset.color+",.9),rgba("+l.dataset.color+",.9))":"linear-gradient(120deg,rgba(255,183,197,.9),rgba(255,197,208,.9))";p.style.borderRadius=ri(14,14+Math.floor(Math.random()*10))+"px "+ri(1,Math.max(1,Math.floor(w/4)))+"px";p.style.height=h+"px";p.style.left=Math.random()*l.clientWidth-100+"px";p.style.marginTop=-(Math.floor(Math.random()*20)+15)+"px";p.style.width=w+"px";p.addEventListener("animationend",()=>p.remove(),{once:true});l.appendChild(p)};requestAnimationFrame(create)})();
 </script>"""
 
-def render_public_profile(config: dict, request: Request | None = None, widgets: list | None = None, default_fonts: list[dict] | None = None) -> str:
+def render_public_profile(config: dict, request: Request | None = None, widgets: list | None = None, default_fonts: list[dict] | None = None, feature_flags: dict[str, bool] | None = None) -> str:
     incoming = config if isinstance(config, dict) else {}
     discord_live = incoming.get("discord") if isinstance(incoming.get("discord"), dict) else {}
     rank = incoming.get("rank") if isinstance(incoming.get("rank"), dict) else None
@@ -864,7 +866,7 @@ def render_public_profile(config: dict, request: Request | None = None, widgets:
     badges_tag = _public_badges(config, settings)
     views = _clamp((config.get("profile") or {}).get("views"), 0, 0, 1_000_000_000)
     views_tag = (
-        f'<span class="views"><span class="eye" aria-hidden="true"></span>{views:,} profile views</span>'
+        f'<span class="views"><span class="eye" aria-hidden="true"></span>{views:,} profile view{"" if views == 1 else "s"}</span>'
         if settings.get("showViews")
         else ""
     )
@@ -886,8 +888,11 @@ def render_public_profile(config: dict, request: Request | None = None, widgets:
     identity = f'<div class="profile-identity"><div class="name-row">{display_name_tag}{guild_tag}{verified}{badges_tag}</div>{handle_tag}{description_tag}{location_tag}</div>'
     discord_element = f'<div class="profile-media-slot"><div class="profile-element profile-element-discord" data-layout-element="discord" style="{element_style(settings, "discord")}">{discord_tile}</div></div>' if discord_tile else ""
     widget_markup = _public_widgets_markup([w for w in (widgets or []) if w.get("id") in {item.get("id") for item in config.get("widgets", [])}], settings)
+    # Living-profile features (guestbook, AMA, tally, moon, ...): only those switched on by
+    # both the owner and the admin panel get a container and a client module.
+    features_container, features_assets = features_markup(public_features_payload(config, feature_flags))
     # Keep a single widget resolver / polling target; CSS places its cards beside presence.
-    modules = f'<div class="profile-media-row" data-profile-media-row>{discord_element}{widget_markup}</div><div class="socials">{links}</div>{_public_sections_markup(config, username_raw)}{meta_tag}'
+    modules = f'<div class="profile-media-row" data-profile-media-row>{discord_element}{widget_markup}</div><div class="socials">{links}</div>{_public_sections_markup(config, username_raw)}{features_container}{meta_tag}'
     if layout == "Sleek":
         card_inner = f'<div class="sleek-hero">{banner_tag}{avatar_tag}</div><div class="sleek-body">{identity}{modules}</div>'
     else:
@@ -898,7 +903,7 @@ def render_public_profile(config: dict, request: Request | None = None, widgets:
         scroll = '<button type="button" class="portfolio-scroll" data-portfolio-next>Scroll for more<span aria-hidden="true">&#8595;</span></button>' if sections else ""
         hero = str(premium.get("hero") or "Classic").lower()
         identity_align = "center" if hero == "centered" else content_align
-        first = f'<div class="profile-element profile-element-frame" data-layout-element="frame" style="{element_style(settings, "frame")}"><div class="card profile-glass portfolio-first-frame" style="background:{card_background if frame_visible else "transparent"};backdrop-filter:blur({card_blur if frame_visible else 0}px);box-shadow:{card_shadow if frame_visible else "none"}"><div class="profile-header" data-identity-align="{identity_align}">{avatar_tag}{identity}</div><div class="profile-media-row" data-profile-media-row>{discord_element}{widget_markup}</div><div class="socials">{links}</div>{meta_tag}</div></div>'
+        first = f'<div class="profile-element profile-element-frame" data-layout-element="frame" style="{element_style(settings, "frame")}"><div class="card profile-glass portfolio-first-frame" style="background:{card_background if frame_visible else "transparent"};backdrop-filter:blur({card_blur if frame_visible else 0}px);box-shadow:{card_shadow if frame_visible else "none"}"><div class="profile-header" data-identity-align="{identity_align}">{avatar_tag}{identity}</div><div class="profile-media-row" data-profile-media-row>{discord_element}{widget_markup}</div><div class="socials">{links}</div>{features_container}{meta_tag}</div></div>'
         card_inner = f'<div class="portfolio-profile" data-hero="{hero}"><section class="portfolio-hero" data-portfolio-section="hero" aria-label="Profile">{first}<div class="profile-mobile-audio" data-profile-mobile-audio></div>{scroll}</section>{sections}</div>'
     media_dock = f'<div class="profile-media-slot profile-audio-slot"><div class="profile-element profile-element-audio" data-layout-element="audio" style="{element_style(settings, "audio")}"><div class="media-dock"{" hidden" if entry_on else ""}>{audio_controls}</div></div></div>' if audio_controls else ""
     if layout == "Portfolio":
@@ -1076,7 +1081,12 @@ h1{{margin:0;font-size:24px;font-weight:600;letter-spacing:-.04em;color:#fff}}
 .section h2,.section h3,.section h4{{margin:0 0 8px;font-size:13px;font-weight:600}}
 .section p,.section li{{margin:0 0 8px;color:#ffffffa8;font-size:13px;line-height:1.5}}
 .section ul,.section ol{{margin:0 0 8px;padding-left:18px}}
-.section a{{color:inherit}}
+.section a,a.section{{color:inherit}}
+a.section{{display:flex;text-decoration:none;transition:border-color .15s,background .15s}}
+a.section:hover{{border-color:{accent}88;background:{accent}14}}
+a.section:focus-visible{{outline:2px solid {accent};outline-offset:2px}}
+.section-project .section-copy{{min-width:0;flex:1}}
+.section-project .project-visit{{display:inline-flex;align-items:center;gap:4px;align-self:center;margin-left:auto;color:#ffffff80;font-size:12px}}
 .section code{{padding:1px 5px;border-radius:6px;background:#ffffff14;font-size:12px}}
 .section-project{{display:flex;gap:12px;align-items:flex-start}}
 .section-cover{{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#ffffff10;flex-shrink:0}}
@@ -1123,6 +1133,7 @@ h1{{margin:0;font-size:24px;font-weight:600;letter-spacing:-.04em;color:#fff}}
 {volume_runtime}{cursor_runtime}
 {chr(60) + 'script type="module" src="/dashboard/portfolio-navigation.mjs?v=20260922-scroll"></script>' if layout == "Portfolio" else ""}
 <script type="module" src="/dashboard/profile-widgets.mjs"></script>
+{features_assets}
 </body></html>"""
 
 
@@ -1173,7 +1184,7 @@ def _public_sections_markup(config: dict, username: str) -> str:
                 elif not str(card.get("value") or "").strip():
                     side_cards.append(_empty_content_markup())
                 else:
-                    side_cards.append(_public_widgets_markup([{**card, "id": str(item["id"])[:38] + "-" + suffix, "status": "empty", "title": card["type"], "subtitle": "LoadingÃ¢â‚¬Â¦"}]))
+                    side_cards.append(_public_widgets_markup([{**card, "id": str(item["id"])[:38] + "-" + suffix, "status": "empty", "title": card["type"], "subtitle": "Loading…"}]))
             append(f'<section class="section profile-introduction">{heading}{subtitle_markup}{body}<div class="profile-skills" aria-label="Skills">{tags}</div><div class="profile-section-cards">{"".join(side_cards)}</div></section>')
             continue
         if kind == "skills":

@@ -538,7 +538,7 @@ export const fr: Messages = {
     frameSize: "Taille du cadre",
     frameHorizontal: "Position horizontale",
     frameVertical: "Position verticale",
-    frameHint: "DÃ©placez et redimensionnez le cadre. Le nom dâ€™utilisateur reste toujours visible.",
+    frameHint: "Déplacez et redimensionnez le cadre. Le nom d’utilisateur reste toujours visible.",
     borderWidth: "Épaisseur de la bordure",
     borderColor: "Couleur de la bordure",
     generalTitle: "Général",

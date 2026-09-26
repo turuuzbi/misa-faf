@@ -147,7 +147,8 @@ def create_app() -> FastAPI:
             if profile:
                 widgets = [{**item, "status": "empty", "title": item["type"], "subtitle": "Loading…"} for item in profile_widget_inputs(profile) if item.get("enabled")]
                 default_fonts = await admin_db.list_default_fonts() if admin_db.has_pool() and (profile.get("settings") or {}).get("profileFont", "Inter") != "Inter" else []
-                return HTMLResponse(render_public_profile(profile, request, widgets=widgets, default_fonts=default_fonts), headers={"Cache-Control": "no-store"})
+                flags = await admin_db.public_flags()
+                return HTMLResponse(render_public_profile(profile, request, widgets=widgets, default_fonts=default_fonts, feature_flags=flags), headers={"Cache-Control": "no-store"})
             alias = await current_handle_for(slug)
             if alias:
                 return username_redirect(f"/{alias}")

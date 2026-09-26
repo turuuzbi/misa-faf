@@ -6,6 +6,7 @@ to the Rust data-api via `feature_api`; stats/views come from the Python
 analytics store via `data_api.analytics_window`.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -14,12 +15,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.v1.features import _bounce, _resolve
 from app.api.v1.profile import require_user
+from app.core.network_safety import probe_public_url
 from app.core.profiles import unwrap_profile_config
 from app.core.rate_limit import rate_limit
 from app.db import data_api, feature_api
 from app.models import User
 
 router = APIRouter(tags=["dashboard"])
+
+_HEX_COLOR = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
 
 
 def _epoch(value: str) -> int:
@@ -37,7 +41,12 @@ def _squared(v: Any) -> float:
 
 
 def _strokes_to_svg(strokes: Any) -> str:
-    """Serialize chalkboard strokes into a safe inline SVG (100x100 viewBox)."""
+    """Serialize chalkboard strokes into a safe inline SVG (100x100 viewBox).
+
+    Stored points are normalized to [0, 1] (the data-api rejects anything else),
+    so they are scaled to the 0-100 viewBox; without the scale every thumbnail
+    was drawn inside the top-left 1% of the tile.
+    """
     parts: list[str] = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="none" role="img">']
     if isinstance(strokes, list):
         for stroke in strokes:
@@ -50,12 +59,13 @@ def _strokes_to_svg(strokes: Any) -> str:
                 if not isinstance(p, list) or len(p) < 2:
                     valid = False
                     break
-                x, y = _squared(p[0]), _squared(p[1])
+                x = max(0.0, min(1.0, _squared(p[0]))) * 100
+                y = max(0.0, min(1.0, _squared(p[1]))) * 100
                 coords.append(f"{x:.2f},{y:.2f}")
             if not valid or not coords:
                 continue
             color = stroke.get("color") if isinstance(stroke, dict) else None
-            stroke_color = color if isinstance(color, str) and color.startswith("#") else "#3b82f6"
+            stroke_color = color if isinstance(color, str) and _HEX_COLOR.fullmatch(color) else "#f2f2f0"
             width = _squared(stroke.get("width")) if isinstance(stroke, dict) else 3.0
             width = max(1.0, min(10.0, width))
             parts.append(
@@ -288,20 +298,10 @@ async def links_check(user: User = Depends(require_user)) -> dict[str, Any]:
     if not targets:
         return {"checked": 0, "results": []}
     results: list[dict[str, Any]] = []
-    headers = {"User-Agent": "Mozilla/5.0 (misa.lol link check)"}
-    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=headers) as client:
-        for social_id, url in targets[:20]:
-            try:
-                response = await client.get(url)
-                ok = response.status_code < 400
-                results.append({
-                    "id": social_id,
-                    "url": url,
-                    "ok": ok,
-                    "note": "ok" if ok else f"returns {response.status_code}",
-                })
-            except Exception:
-                results.append({"id": social_id, "url": url, "ok": False, "note": "could not reach it"})
+    for social_id, url in targets[:20]:
+        # SSRF guard: public hosts only, every redirect hop re-checked.
+        ok, note = await probe_public_url(url)
+        results.append({"id": social_id, "url": url, "ok": ok, "note": note})
     return {"checked": len(results), "results": results}
 
 
@@ -364,6 +364,7 @@ async def badge_toggle(badge_id: str, payload: dict[str, Any], user: User = Depe
                     badge["enabled"] = enabled
                     break
             await data_api.save_profile(user.id, existing)
-    except (HTTPError, RuntimeError, ValueError, TimeoutError, OSError):
+    except (httpx.HTTPError, RuntimeError, ValueError, TimeoutError, OSError):
+        # `HTTPError` was never imported here, so any failure raised NameError.
         pass
     return {"ok": True, "enabled": enabled}

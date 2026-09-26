@@ -1,5 +1,6 @@
 "use client";
 
+import { ProfileFeatures } from "./ProfileFeatures";
 import { ProfileLayoutElement } from "./ProfileLayoutElement";
 
 import { BadgeCheck, Crown, MapPin, Sparkles, Zap } from "lucide-react";
@@ -215,7 +216,7 @@ export function ProfileMeta({ config, align = "center", floating = false }: { co
   if (!showViews && !showJoin) return null;
   return (
     <div className={`${floating ? "pointer-events-none absolute bottom-5 left-5 z-10" : "mt-7"} flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/35 ${floating ? "justify-start" : justify}`}>
-      {showViews && <span className="inline-flex items-center gap-2"><EyeIcon />{config.profile.views.toLocaleString()} profile views</span>}
+      {showViews && <span className="inline-flex items-center gap-2"><EyeIcon />{config.profile.views.toLocaleString()} profile {config.profile.views === 1 ? "view" : "views"}</span>}
       {showJoin && <span>{joined}</span>}
     </div>
   );
@@ -284,6 +285,7 @@ export function ProfileModules({ config, preview, align = "center" }: { config: 
       <ProfileWidgets config={config} preview={preview} presence={<ProfileDiscord config={config} />} />
       <SocialLinks config={config} />
       <ProfileSections config={config} preview={preview} />
+      <ProfileFeatures config={config} preview={preview} />
     </div></WidgetResolutionProvider>
   );
 }

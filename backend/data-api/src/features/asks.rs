@@ -24,8 +24,7 @@ pub struct Submit {
 }
 
 async fn enabled(pool: &PgPool, user_id: &Uuid) -> bool {
-    let settings = settings_of(read_config(pool, user_id).await.as_ref());
-    feature_enabled(&settings, "asks")
+    feature_on(pool, user_id, "asks").await.0
 }
 
 pub async fn submit(
@@ -50,8 +49,8 @@ pub async fn submit(
     let ip = body.ip.clone().unwrap_or_else(|| "?".to_string());
     rate_limit(&pool, &user_id, "asks_submit", &scope_key(&ip), RATE_WINDOW_MS, RATE_MAX).await?;
 
-    let question = body.question.unwrap_or_default();
-    let contact = body.contact.unwrap_or_default();
+    let question = body.question.unwrap_or_default().trim().to_string();
+    let contact = body.contact.unwrap_or_default().trim().to_string();
     if question.is_empty() || question.chars().count() > QUESTION_MAX {
         return Err(err_reason(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -78,6 +77,8 @@ pub async fn submit(
     .execute(&pool)
     .await
     .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "store_error"))?;
+    // Retention trimming is a write; keep it on the submit path, not the public read path.
+    trim_retention(&pool, &user_id).await;
     ok(json!({ "ok": true, "id": id }))
 }
 
@@ -109,7 +110,6 @@ pub async fn list(
     if !enabled(&pool, &user_id).await {
         return Err(err(StatusCode::NOT_FOUND, "feature_off"));
     }
-    trim_retention(&pool, &user_id).await;
     let rows: Vec<(String, String, Option<String>, chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
         "SELECT question, COALESCE(public_id, id::text), answer, published_at, order_idx
          FROM feature_asks WHERE user_id=$1 AND status='published' ORDER BY order_idx ASC",
@@ -192,18 +192,17 @@ pub async fn publish(
         ));
     }
     let public_id = new_public_id();
-    let max_idx: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(order_idx) FROM feature_asks WHERE user_id=$1 AND status='published'")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await
-            .ok()
-            .flatten();
-    let next_order = if status == "draft" {
-        order_idx as i64
-    } else {
-        (max_idx.unwrap_or(0) + 1) as i64
-    };
+    // MAX(order_idx) is INT4; decode it as i64 explicitly. Decoding INT4 straight into
+    // i64 failed, `.ok()` swallowed the error, and every answer was published at order 0/1.
+    let max_idx: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(order_idx), 0)::BIGINT FROM feature_asks WHERE user_id=$1 AND status='published'",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "store_error"))?;
+    // An answer that was published before (unpublished to edit) keeps its slot.
+    let next_order = if order_idx > 0 { order_idx as i64 } else { max_idx + 1 };
     sqlx::query(
         "UPDATE feature_asks SET status='published', public_id=$3, order_idx=$4, version=version+1, published_at=NOW()
          WHERE id=$1 AND user_id=$2",

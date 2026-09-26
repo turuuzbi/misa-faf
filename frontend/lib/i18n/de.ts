@@ -535,7 +535,7 @@ export const de: Messages = {
     showAvatar: "Profilbild anzeigen",
     showAvatarBorder: "Show avatar border",
     showDisplayName: "Anzeigenamen anzeigen",
-    frameSize: "RahmengrÃ¶ÃŸe",
+    frameSize: "Rahmengröße",
     frameHorizontal: "Horizontale Position",
     frameVertical: "Vertikale Position",
     frameHint: "Rahmen verschieben und skalieren. Der Benutzername bleibt immer sichtbar.",

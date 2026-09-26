@@ -140,5 +140,36 @@ pub async fn registers(pool: &PgPool) -> Result<()> {
     ] {
         sqlx::query(statement).execute(pool).await?;
     }
+    // Admin-panel switches for every feature group. Seeded ON so an upgrade does
+    // not change live behaviour; a missing row fails closed (see helpers::global_enabled).
+    for (key, description) in FEATURE_SWITCHES {
+        sqlx::query(
+            "INSERT INTO feature_flags (key, enabled, description) VALUES ($1, TRUE, $2) ON CONFLICT (key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(description)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
+
+/// Keep in sync with `FEATURE_FLAG_CATALOG` in backend/app/core/feature_flags.py.
+pub const FEATURE_SWITCHES: [(&str, &str); 16] = [
+    ("feature.ask_anything", "Ask me anything (global switch)"),
+    ("feature.other_side", "The other side / card back (global switch)"),
+    ("feature.night_shift", "The night shift (global switch)"),
+    ("feature.daily_draw", "The draw (global switch)"),
+    ("feature.time_capsule", "Time capsule (global switch)"),
+    ("feature.archive", "The archive (global switch)"),
+    ("feature.moon", "The moon (global switch)"),
+    ("feature.guestbook", "Guestbook (global switch)"),
+    ("feature.neighbours", "Neighbours (global switch)"),
+    ("feature.alive", "Alive parent switch (presence, clock, hit counter)"),
+    ("feature.alive.presence", "Alive: live visitor count"),
+    ("feature.alive.clock", "Alive: owner clock"),
+    ("feature.alive.hits", "Alive: retro hit counter"),
+    ("feature.secret_word", "Secret word (global switch)"),
+    ("feature.chalkboard", "A chalkboard (global switch)"),
+    ("feature.tally", "The tally (global switch)"),
+];

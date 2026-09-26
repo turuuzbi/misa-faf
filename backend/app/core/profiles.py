@@ -157,6 +157,8 @@ async def resolve_public_profile(username: str) -> dict[str, Any] | None:
     from app.core.premium import has_premium, public_projection
     config = public_projection(config, await has_premium(user.id))
     cleaned = apply_badge_ownership(sanitize_profile_config(config), stored, grants)
+    from app.core.feature_privacy import public_feature_projection
+    cleaned = public_feature_projection(cleaned)
     from app.db import achievements
     cleaned["rank"] = await achievements.current_rank_for_user(user.id)
     from app.core.discord_live import public_card_discord

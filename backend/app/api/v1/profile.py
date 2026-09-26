@@ -344,7 +344,10 @@ async def save_my_profile(payload: dict[str, Any], user: User = Depends(require_
         updated = await data_api.update_user(user.id, display_name=display_name)
         if updated is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
+        from app.core.feature_privacy import sync_after_save, sync_private_features
+        payload = await sync_private_features(user.id, payload, existing)
         saved = await data_api.save_profile(user.id, payload)
+        await sync_after_save(user.id, payload)
         from app.db import achievements
         await achievements.evaluate_user(user.id)
         if user.username:

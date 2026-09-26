@@ -37,8 +37,25 @@ FEATURE_FLAG_CATALOG: tuple[tuple[str, str], ...] = (
     ("integrations.discord", "Discord integration"),
     ("feature.usernameEffects.glitch", "Glitch username effect"),
     ("feature.usernameEffects.pulse", "Pulse username effect"),
-
-
     ("feature.usernameEffects.wave", "Wave username effect"),
     ("feature.usernameEffects.shadow", "Shadow username effect"),
+    # Living-profile feature groups (spec v1.0). The Rust data-api checks these on
+    # every public read/write; turning one off hides it everywhere and rejects its actions.
+    # Keep in sync with FEATURE_SWITCHES in backend/data-api/src/features/schema.rs.
+    ("feature.ask_anything", "Ask me anything (global switch)"),
+    ("feature.other_side", "The other side / card back (global switch)"),
+    ("feature.night_shift", "The night shift (global switch)"),
+    ("feature.daily_draw", "The draw (global switch)"),
+    ("feature.time_capsule", "Time capsule (global switch)"),
+    ("feature.archive", "The archive (global switch)"),
+    ("feature.moon", "The moon (global switch)"),
+    ("feature.guestbook", "Guestbook (global switch)"),
+    ("feature.neighbours", "Neighbours (global switch)"),
+    ("feature.alive", "Alive parent switch (presence, clock, hit counter)"),
+    ("feature.alive.presence", "Alive: live visitor count"),
+    ("feature.alive.clock", "Alive: owner clock"),
+    ("feature.alive.hits", "Alive: retro hit counter"),
+    ("feature.secret_word", "Secret word (global switch)"),
+    ("feature.chalkboard", "A chalkboard (global switch)"),
+    ("feature.tally", "The tally (global switch)"),
 )

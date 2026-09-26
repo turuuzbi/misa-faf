@@ -7,7 +7,7 @@ username -> user id and applies session authorization for owner endpoints.
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from httpx import HTTPError
+from httpx import HTTPError, HTTPStatusError
 
 from app.api.v1.profile import require_user
 from app.core.rate_limit import client_ip
@@ -32,9 +32,29 @@ _DRAWING_ACTION_ALIASES = {
 }
 
 
+# Client-facing codes from the data-api that are safe to pass through. Anything
+# else (5xx, transport errors) stays a generic 502.
+_PASSTHROUGH_STATUS = {400, 403, 404, 409, 410, 413, 422, 429}
+
+
 def _proxy_errors(exc: Exception) -> HTTPException | None:
     if isinstance(exc, feature_api.DataConflict):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.code)
+    if isinstance(exc, HTTPStatusError) and exc.response.status_code in _PASSTHROUGH_STATUS:
+        # Validation errors, rate limits, "feature off" and stale grants used to
+        # surface as "Feature service is temporarily unavailable" (502).
+        code = exc.response.status_code
+        try:
+            body = exc.response.json()
+        except ValueError:
+            body = {}
+        error = str(body.get("error") or "") if isinstance(body, dict) else ""
+        reason = str(body.get("reason") or "") if isinstance(body, dict) else ""
+        if error == "feature_off":
+            # Generic, non-leaking answer for disabled features (spec p.19).
+            return HTTPException(status_code=code, detail="FEATURE_UNAVAILABLE")
+        headers = {"Retry-After": "600"} if code == 429 else None
+        return HTTPException(status_code=code, detail=reason or error or "Request rejected.", headers=headers)
     if isinstance(exc, HTTPError):
         return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Feature service is temporarily unavailable.")
     return None
@@ -59,6 +79,38 @@ def _bounce(ex: Exception) -> None:
     if proxy is not None:
         raise proxy
     raise ex
+
+
+# ----- owner inboxes ---------------------------------------------------------
+# Static owner paths must be registered before the public "/{username}" routes
+# that share their prefix: Starlette matches in order, so "/guestbook/inbox"
+# used to resolve to the public guestbook of a user called "inbox" (404).
+
+@router.get("/guestbook/inbox")
+async def guestbook_inbox(user: User = Depends(require_user)):
+    try:
+        payload = await feature_api.guestbook_inbox(user.id)
+    except Exception as ex:
+        _bounce(ex)
+    return {"entries": (payload or {}).get("entries", [])}
+
+
+@router.get("/asks/inbox")
+async def asks_inbox(user: User = Depends(require_user)):
+    try:
+        payload = await feature_api.asks_inbox(user.id)
+    except Exception as ex:
+        _bounce(ex)
+    return {"asks": (payload or {}).get("asks", [])}
+
+
+@router.get("/drawings/board")
+async def drawings_board(user: User = Depends(require_user)):
+    try:
+        payload = await feature_api.drawings_board(user.id)
+    except Exception as ex:
+        _bounce(ex)
+    return {"drawings": (payload or {}).get("drawings", [])}
 
 
 # ----- guestbook -------------------------------------------------------------
@@ -94,15 +146,6 @@ async def guestbook_submit(username: str, request: Request, payload: dict[str, A
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     return result
-
-
-@router.get("/guestbook/inbox")
-async def guestbook_inbox(user: User = Depends(require_user)):
-    try:
-        payload = await feature_api.guestbook_inbox(user.id)
-    except Exception as ex:
-        _bounce(ex)
-    return {"entries": (payload or {}).get("entries", [])}
 
 
 @router.post("/guestbook/inbox/{entry_id}/{action}")
@@ -151,15 +194,6 @@ async def asks_submit(username: str, request: Request, payload: dict[str, Any]):
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     return result
-
-
-@router.get("/asks/inbox")
-async def asks_inbox(user: User = Depends(require_user)):
-    try:
-        payload = await feature_api.asks_inbox(user.id)
-    except Exception as ex:
-        _bounce(ex)
-    return {"asks": (payload or {}).get("asks", [])}
 
 
 @router.post("/asks/inbox/{ask_id}/{action}")
@@ -214,15 +248,6 @@ async def drawings_submit(username: str, payload: dict[str, Any]):
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     return result
-
-
-@router.get("/drawings/board")
-async def drawings_board(user: User = Depends(require_user)):
-    try:
-        payload = await feature_api.drawings_board(user.id)
-    except Exception as ex:
-        _bounce(ex)
-    return {"drawings": (payload or {}).get("drawings", [])}
 
 
 @router.post("/drawings/{entry_id}/{action}")
@@ -357,17 +382,17 @@ async def capsule_unpublish(user: User = Depends(require_user)):
 # ----- tally -----------------------------------------------------------------
 
 @router.get("/tally/{username}")
-async def tally_public(username: str):
+async def tally_public(username: str, voter: str | None = None):
     user_id = await _resolve(username)
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     try:
-        payload = await feature_api.tally_current(user_id)
+        payload = await feature_api.tally_current(user_id, voter=(voter or "")[:128] or None)
     except Exception as ex:
         _bounce(ex)
     if payload is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
-    return {"tally": payload.get("poll"), "counts": payload.get("counts")}
+    return {"tally": payload.get("poll"), "counts": payload.get("counts"), "voted": payload.get("voted")}
 
 
 @router.post("/tally/{username}/vote")
@@ -381,6 +406,7 @@ async def tally_vote(username: str, payload: dict[str, Any]):
             token=str(payload.get("token", "")),
             option=str(payload.get("option", "")),
             idem=str(payload.get("idem", "")),
+            poll_id=str(payload.get("poll_id") or "") or None,
         )
     except Exception as ex:
         _bounce(ex)
@@ -534,10 +560,14 @@ async def alive_heartbeat(username: str, payload: dict[str, Any]):
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found.")
     try:
+        try:
+            lease_seconds = int(payload.get("lease_seconds", 60))
+        except (TypeError, ValueError):
+            lease_seconds = 60
         result = await feature_api.alive_heartbeat(
             user_id,
             token=str(payload.get("token", "")),
-            lease_seconds=int(payload.get("lease_seconds", 60)),
+            lease_seconds=lease_seconds,
         )
     except Exception as ex:
         _bounce(ex)

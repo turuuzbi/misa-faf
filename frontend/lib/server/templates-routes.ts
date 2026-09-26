@@ -21,7 +21,9 @@ const TEMPLATE_ASSET_KEYS = [
 ] as const;
 
 const PERSONAL_SETTINGS = new Set([
-  "ogTitle", "ogDescription", "ogOverlayAvatar", "ogOverlayName", "ogOverlayAddress"
+  "ogTitle", "ogDescription", "ogOverlayAvatar", "ogOverlayName", "ogOverlayAddress",
+  // Living-profile content/switches stay with their owner (see backend/app/core/templates.py).
+  "capsule", "secret", "tally", "draw", "neighbours", "reverse", "night", "timezone", "clock", "clockLabel", "clock24", "guestbook", "guestbookHeading", "guestbookPaused", "guestbookPinning", "asks", "asksPrompt", "asksAcceptNew", "doodles", "doodlesTitle", "doodlesPaused", "moon", "presence", "hits", "vigil", "since", "replay", "remember", "archive"
 ]);
 
 const VISIBILITIES = new Set(["public", "private", "unlisted"]);

@@ -8,6 +8,7 @@ import { ProfileAvatar, ProfileMeta, ProfileBio, ProfileDiscord, ProfileIdentity
 import { ProfileSections } from "./ProfileSections";
 import { ProfileWidgets, WidgetResolutionProvider } from "./ProfileWidgets";
 import { SocialLinks } from "../socials/SocialLinks";
+import { ProfileFeatures } from "./ProfileFeatures";
 import { portfolioPages } from "@/lib/portfolio";
 import type { ProfileConfig } from "@/lib/types";
 
@@ -53,7 +54,7 @@ export function PortfolioProfile({ config, preview, rootRef, frameStyle }: { con
         <ProfileLayoutElement id="frame"><div className="profile-glass portfolio-first-frame p-7 sm:p-9" style={frameStyle} onPointerMove={tilt} onPointerLeave={event => { event.currentTarget.style.transform = ""; }}><div className="profile-header" data-identity-align={align}>
           {config.settings.showAvatar !== false && <ProfileAvatar config={config} />}
           <div className="profile-first-identity" style={{ textAlign: align }}><ProfileIdentity config={config} align={align} /><ProfileBio config={config} align={align} showLocation={false} /></div>
-        </div><ProfileWidgets config={config} preview={preview} presence={<ProfileDiscord config={config} />} /><SocialLinks config={config} align={align} /><ProfileMeta config={config} align="left" /></div></ProfileLayoutElement>
+        </div><ProfileWidgets config={config} preview={preview} presence={<ProfileDiscord config={config} />} /><SocialLinks config={config} align={align} /><ProfileFeatures config={config} preview={preview} /><ProfileMeta config={config} align="left" /></div></ProfileLayoutElement>
         <div data-profile-mobile-audio className="profile-mobile-audio" />
         {!!sections.length && <button type="button" className="portfolio-scroll" onClick={() => navigate(sections[0].id)}>Scroll for more<ArrowDown size={18} /></button>}
       </section>
